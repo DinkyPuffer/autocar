@@ -7,104 +7,96 @@
 #include <memory.h>
 #include "cmsis_os2.h"
 #include "hi_io.h"
-#include "hi_time.h"
 
 #define GPIOL 13
 #define GPIOR 14
 
-uint32_t exec1;//时间变量
-osTimerId_t id1;//创建时间ID
-uint32_t timerDelay_1;//创建延时时间
-osStatus_t status;//创建返回参数
+static osTimerId_t g_tcrt_timer_id = NULL;
 
-//获取红外传感器输出的电平高低
-void get_tcrt5000_value (void) {
-    WifiIotGpioValue id_status;  //声明变量id_status
+/**
+ * @brief 获取 TCRT5000 传感器状态并打印
+ * @note  根据 LM393 原理图：
+ *        低电平(0) -> 识别到白色/有反射 (传感器灯亮)
+ *        高电平(1) -> 识别到黑色/无反射 (传感器灯灭)
+ */
+void get_tcrt5000_value(void) 
+{
+    WifiIotGpioValue status_l = WIFI_IOT_GPIO_VALUE1;
+    WifiIotGpioValue status_r = WIFI_IOT_GPIO_VALUE1;
 
-    GpioGetInputVal(GPIOL, &id_status);//获取GPIO13引脚的输入电平值
+    // 读取左侧 (GPIO_13) 和右侧 (GPIO_14) 的电平状态
+    GpioGetInputVal(GPIOL, &status_l);
+    GpioGetInputVal(GPIOR, &status_r);
 
-    //如果GPIO13输入电平值是低电平，串口打印“left black”，说明左边的红外传感器识别到了黑色（此时传感器灯熄灭）
-    if (id_status == WIFI_IOT_GPIO_VALUE0) {
+    // 判读左传感器状态
+    if (status_l == WIFI_IOT_GPIO_VALUE0) {
+        printf("left white\r\n");
+    } else {
         printf("left black\r\n");
     }
-    else
-    {
-        printf("left white\r\n");
-    }
 
-    GpioGetInputVal(GPIOR, &id_status);//获取GPIO14引脚的输入电平值
-
-    //如果GPIO14输入电平值是低电平，串口打印“right black”，说明右边的红外传感器识别到了黑色（此时传感器灯熄灭）
-    if (id_status == WIFI_IOT_GPIO_VALUE0) {
+    // 判读右传感器状态
+    if (status_r == WIFI_IOT_GPIO_VALUE0) {
+        printf("right white\r\n");
+    } else {
         printf("right black\r\n");
     }
-    else
-    {
-        printf("right white\r\n");
-    }
 }
 
-/***** 定时器1 回调函数 *****/
-void Timer1_Callback(void *arg)//定时器超时后会回调这个函数
+/**
+ * @brief 定时器回调函数（每 50ms 触发一次检测）
+ */
+static void Timer_Callback(void *arg)
 {
     (void)arg;
-    //循环执行获取左右两个传感器值的任务，并且每次获取之间会等待2秒钟
     get_tcrt5000_value();
-
-    //定时器关闭
-    //status =osTimerStop(id1);
-    //if(status==osOK)
-    //  printf("定时关闭成功\n");
 }
 
-/*****任务一*****/
+/**
+ * @brief TCRT 任务主函数
+ */
 static void TCRTTask(void)
 {
-    printf("start test tcrt5000\r\n");
+    printf("start tcrt5000 test task...\r\n");
 
-    /***** 定时器创建 *****/
-    exec1 = 1U;
-    //创建定时器并获取ID
-    id1 = osTimerNew(Timer1_Callback, osTimerPeriodic, &exec1, NULL);
-    if (id1 != NULL)
-    {
-        // Hi3861 1U=10ms, 100U=1S
-        //设置定时器超时时间10秒
-        timerDelay_1 = 5U;
-        //定时器开启并获取返回参数
-        status = osTimerStart(id1, timerDelay_1);
-        if (status != osOK)
-        {
-            printf("Timer could not be started\r\n");
+    // 创建周期性软件定时器 (5U = 50ms 检测一次)
+    g_tcrt_timer_id = osTimerNew(Timer_Callback, osTimerPeriodic, NULL, NULL);
+    
+    if (g_tcrt_timer_id != NULL) {
+        // 启动定时器，时间间隔为 5U (约 50ms)
+        osStatus_t status = osTimerStart(g_tcrt_timer_id, 5U);
+        if (status == osOK) {
+            printf("TCRT timer started successfully!\r\n");
+        } else {
+            printf("Failed to start TCRT timer!\r\n");
         }
-        else
-        {
-            printf("定时开启成功! \n");
-        }
+    } else {
+        printf("Failed to create TCRT timer!\r\n");
     }
 }
 
+/**
+ * @brief TCRT 模块 GPIO 及线程初始化
+ */
 void TCRT(void)
 {
-    GpioInit();//初始化GPIO
-    //GPIO功能复用为普通GPIO功能
+    // 1. 初始化 GPIO 功能
+    GpioInit();
     IoSetFunc(WIFI_IOT_IO_NAME_GPIO_13, WIFI_IOT_IO_FUNC_GPIO_13_GPIO);
     IoSetFunc(WIFI_IOT_IO_NAME_GPIO_14, WIFI_IOT_IO_FUNC_GPIO_14_GPIO);
-    //设置GPIO功能为输入
+
+    // 2. 设置输入方向
     GpioSetDir(WIFI_IOT_IO_NAME_GPIO_13, WIFI_IOT_GPIO_DIR_IN);
     GpioSetDir(WIFI_IOT_IO_NAME_GPIO_14, WIFI_IOT_GPIO_DIR_IN);
 
-    osThreadAttr_t attr;
+    // 3. 创建运行任务
+    osThreadAttr_t attr = {0};
     attr.name = "TCRTTask";
-    attr.attr_bits = 0U;
-    attr.cb_mem = NULL;
-    attr.cb_size = 0U;
-    attr.stack_mem = NULL;
-    attr.stack_size = 10240;
-    attr.priority = 25;
+    attr.stack_size = 4096; // 调整为常规推荐大小，避免占用过多栈空间
+    attr.priority = osPriorityNormal;
 
     if (osThreadNew((osThreadFunc_t)TCRTTask, NULL, &attr) == NULL) {
-        printf("Falied to create RobotCarTestTask!\n");
+        printf("Failed to create TCRTTask!\r\n");
     }
 }
 
