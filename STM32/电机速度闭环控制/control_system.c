@@ -3,126 +3,114 @@
 #include "stdio.h"
 
 int L_coder, R_coder;
-int Motor_A, Motor_B;     // ?? PWM ??
-int OverflowTime = 100;
-volatile uint32_t millis = 0;   // ?????
-volatile uint32_t seconds = 0;  // ????
+int Motor_A, Motor_B;     
+int OverflowTime = 100;           // ???? 100ms
+volatile uint8_t control_flag = 0; // ???????
 
 /******************************************************************
-????: ?? PI ??? (??? A)
+??: ????? PI ??? (?? A / ???)
 ******************************************************************/
-int Incremental_PI_A(int Encoders_A, int Target_A)
+int Incremental_PI_A(int Encoder, int Target)
 {
-    float Velocity_KP = 7.0, Velocity_KI = 0.016, Velocity_KD = 0.003;
+    // 1. ??????????????? (?? C89 ????)
+    float Velocity_KP = 7.0f;
+    float Velocity_KI = 0.16f;
+    float Velocity_KD = 0.03f;
+    
     static int Pwm_A = 0;
-    static int Integral_A = 0;
-    static float Error_prev_A = 0;
-    float MaxIntegral = 0.0;
-    float MinIntegral = 0.0;
-    
-    float Error_A = (float)(Target_A - Encoders_A); // ????
+    static float Error_A = 0, Error_prev_A = 0, Error_prev2_A = 0;
+    float p_out, i_out, d_out;
 
-    Integral_A += Error_A; // ?????
+    // 2. ?????
+    Error_A = (float)(Target - Encoder); // ????
 
-    // ????
-    MaxIntegral = (float)(7199 / Velocity_KI);
-    MinIntegral = -(float)(7199 / Velocity_KI);
-    if (Integral_A > MaxIntegral) Integral_A = MaxIntegral;
-    else if (Integral_A < MinIntegral) Integral_A = MinIntegral;
+    // ????? PID ??
+    p_out = Velocity_KP * (Error_A - Error_prev_A);
+    i_out = Velocity_KI * Error_A;
+    d_out = Velocity_KD * (Error_A - 2.0f * Error_prev_A + Error_prev2_A);
 
-    Pwm_A += Velocity_KP * Error_A + Velocity_KD * (Error_A - Error_prev_A);
+    Pwm_A += (int)(p_out + i_out + d_out); // ????
 
     // PWM ????
-    if (Pwm_A > 7199) Pwm_A = 7199;
-    else if (Pwm_A < -7199) Pwm_A = -7199;
+    if (Pwm_A > PWM_MAX)  Pwm_A = PWM_MAX;
+    if (Pwm_A < -PWM_MAX) Pwm_A = -PWM_MAX;
 
-    Error_prev_A = Error_A; // ??????
+    // ??????
+    Error_prev2_A = Error_prev_A;
+    Error_prev_A = Error_A;
 
-    return Pwm_A; // ????
+    return Pwm_A; 
 }
 
 /******************************************************************
-????: ?? PI ??? (??? B)
+??: ????? PI ??? (?? B / ???)
 ******************************************************************/
-int Incremental_PI_B(int Encoders_B, int Target_B)
+int Incremental_PI_B(int Encoder, int Target)
 {
-    float Velocity_KP = 7.0, Velocity_KI = 0.016, Velocity_KD = 0.003;
-    static int Pwm_B = 0;
-    static int Integral_B = 0;
-    static float Error_prev_B = 0;
-    float MaxIntegral = 0.0;
-    float MinIntegral = 0.0;
+    // 1. ???????????
+    float Velocity_KP = 7.0f;
+    float Velocity_KI = 0.16f;
+    float Velocity_KD = 0.03f;
     
-    float Error_B = (float)(Target_B - Encoders_B); // ????
+    static int Pwm_B = 0;
+    static float Error_B = 0, Error_prev_B = 0, Error_prev2_B = 0;
+    float p_out, i_out, d_out;
 
-    Integral_B += Error_B; // ?????
+    // 2. ?????
+    Error_B = (float)(Target - Encoder);
 
-    // ????
-    MaxIntegral = (float)(7199 / Velocity_KI);
-    MinIntegral = -(float)(7199 / Velocity_KI);
-    if (Integral_B > MaxIntegral) Integral_B = MaxIntegral;
-    else if (Integral_B < MinIntegral) Integral_B = MinIntegral;
+    p_out = Velocity_KP * (Error_B - Error_prev_B);
+    i_out = Velocity_KI * Error_B;
+    d_out = Velocity_KD * (Error_B - 2.0f * Error_prev_B + Error_prev2_B);
 
-    Pwm_B += Velocity_KP * Error_B + Velocity_KD * (Error_B - Error_prev_B);
+    Pwm_B += (int)(p_out + i_out + d_out);
 
-    // PWM ????
-	
-    if (Pwm_B > 7199) Pwm_B = 7199;
-    else if (Pwm_B < -7199) Pwm_B = -7199;
+    if (Pwm_B > PWM_MAX)  Pwm_B = PWM_MAX;
+    if (Pwm_B < -PWM_MAX) Pwm_B = -PWM_MAX;
 
-    Error_prev_B = Error_B; // ??????
+    Error_prev2_B = Error_prev_B;
+    Error_prev_B = Error_B;
 
-    return Pwm_B; // ????
+    return Pwm_B; 
 }
 
 /******************************************************************
-????: ?????????
+??: ??????????? (rad/s -> ????)
 ******************************************************************/
 int Rs_To_CPR(float rads)
 {
-    int CRP = 0;
-    CRP = rads * ((700 * 4) / (1000 / OverflowTime));
-    return CRP;
+    float cpr = rads * (700.0f * 4.0f) * ((float)OverflowTime / 1000.0f);
+    return (int)cpr;
 }
 
 /******************************************************************
-????: ??????
+??: ????????
 ******************************************************************/
 void System_Control(void)
 {
-    int TageA = 0;
-    int TageB = 0;
+    int TageA = Rs_To_CPR(1.0f); 
+    int TageB = Rs_To_CPR(1.0f);
 
-    // ?? OverflowTime ms ??????
     L_coder = Read_Encoder(2);
     R_coder = Read_Encoder(3);
-    printf("left coder : %d\r\n", L_coder);
-    printf("right coder : %d\r\n", R_coder);
 
-    // ?? OverflowTime ????????????????
-    TageA = Rs_To_CPR(1.0);
-    TageB = Rs_To_CPR(1.0);
-    printf("TageA coder : %d\r\n", TageA);
-    printf("TageB coder : %d\r\n", TageB);
-
-    // ???????????? PWM
     Motor_A = Incremental_PI_A(L_coder, TageA);
     Motor_B = Incremental_PI_B(R_coder, TageB);
-    printf("Motor_A pwm : %d\r\n", Motor_A);
-    printf("Motor_B pwm : %d\r\n", Motor_B);
 
-    Set_Pwm(Motor_A, Motor_B); // ??????
+    Set_Pwm(Motor_A, Motor_B);
 }
 
 /******************************************************************
-????: ?????????????
+??: ???????????
 ******************************************************************/
 void SysTick_Handler(void)
 {
-    millis++; // ?????????,???? 1
-    if (millis % OverflowTime == 0) // ??????? 100
+    static uint32_t tick_count = 0;
+    tick_count++;
+    
+    if (tick_count >= OverflowTime) 
     {
-        millis = 0; // ?????
-        System_Control();
+        tick_count = 0;
+        control_flag = 1; 
     }
 }
