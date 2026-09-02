@@ -3,16 +3,21 @@
 
 #include "sys.h"
 
-// ????????
-#define AIN PBout(14)
-#define BIN PBout(13)
-#define PWMA TIM4->CCR1
-#define PWMB TIM4->CCR2
+// 1. ?? PWM ??? (?? arr = 7199)
+#define PWM_MAX 7199
 
-// ????
-u32 myabs(long int a);
+// 2. ?????? (?????????)
+// ???????: PWM -> PB7 (TIM4_CH2), ?? -> PB14
+#define PWMB TIM4->CCR2
+#define L_IB PBout(14)
+
+// ???????: PWM -> PB6 (TIM4_CH1), ?? -> PB13
+#define PWMA TIM4->CCR1
+#define R_IA PBout(13)
+
+// 3. ????
 void Motor_Init(void);
 void PWM_Init(u16 arr, u16 psc);
-void Set_Pwm(int moto1, int moto2);
+void Set_Pwm(int moto_left, int moto_right);
 
 #endif
